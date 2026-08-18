@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 type NutritionResult = {
@@ -75,17 +75,55 @@ const STEPS = [
   },
 ];
 
+function compressImage(file: File, maxDim: number): Promise<File> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      let w = img.width;
+      let h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) {
+          h = Math.round((h / w) * maxDim);
+          w = maxDim;
+        } else {
+          w = Math.round((w / h) * maxDim);
+          h = maxDim;
+        }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        (blob) => {
+          URL.revokeObjectURL(url);
+          resolve(new File([blob!], file.name, { type: "image/jpeg" }));
+        },
+        "image/jpeg",
+        0.7
+      );
+    };
+    img.src = url;
+  });
+}
+
 export default function Home() {
   const [preview, setPreview] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<NutritionResult | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [history, setHistory] = useState<ScanHistory[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fetchedRef = useRef(false);
 
-  const handleFile = useCallback((file: File) => {
-    if (!file.type.startsWith("image/")) return;
-    const url = URL.createObjectURL(file);
+  const handleFile = useCallback((f: File) => {
+    if (!f.type.startsWith("image/")) return;
+    const url = URL.createObjectURL(f);
     setPreview(url);
+    setFile(f);
     setResult(null);
   }, []);
 
@@ -108,21 +146,66 @@ export default function Home() {
     setDragActive(false);
   }, []);
 
-  const analyze = useCallback(() => {
-    if (!preview) return;
+  const fetchHistory = useCallback(async () => {
+    try {
+      setHistoryLoading(true);
+      const res = await fetch("/api/scans?limit=10");
+      const data = await res.json();
+      if (res.ok) {
+        setHistory(data.scans || []);
+      }
+    } catch (err) {
+      console.error("Fetch history error:", err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  const analyze = useCallback(async () => {
+    if (!preview || !file) return;
     setLoading(true);
     setResult(null);
-    setTimeout(() => {
-      setResult(MOCK_RESULT);
+
+    try {
+      const compressed = await compressImage(file, 800);
+
+      const formData = new FormData();
+      formData.append("file", compressed);
+
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Gagal menganalisa foto");
+      }
+
+      setResult(data.result);
+      fetchHistory();
+    } catch (err) {
+      console.error("Analyze error:", err);
+      alert("Gagal menganalisa foto. Silakan coba lagi.");
+    } finally {
       setLoading(false);
-    }, 2000);
-  }, [preview]);
+    }
+  }, [preview, file, fetchHistory]);
 
   const reset = useCallback(() => {
     setPreview(null);
+    setFile(null);
     setResult(null);
     setLoading(false);
   }, []);
+
+  useEffect(() => {
+    if (!fetchedRef.current) {
+      fetchedRef.current = true;
+      fetchHistory();
+    }
+  }, [fetchHistory]);
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -391,12 +474,71 @@ export default function Home() {
           <h3 className="text-lg font-semibold text-neutral-dark mb-4">
             Riwayat Scan
           </h3>
-          <div className="border border-neutral-mid bg-neutral-light p-10 text-center">
-            <p className="text-neutral-dark/50 text-sm">
-              Belum ada riwayat scan. Hasil analisa akan muncul di sini setelah
-              Anda mengupload foto makanan.
-            </p>
-          </div>
+          {historyLoading ? (
+            <div className="border border-neutral-mid bg-neutral-light p-10 text-center">
+              <div className="w-6 h-6 border-2 border-neutral-mid border-t-primary animate-spin mx-auto mb-3" />
+              <p className="text-neutral-dark/50 text-sm">Memuat riwayat...</p>
+            </div>
+          ) : history.length === 0 ? (
+            <div className="border border-neutral-mid bg-neutral-light p-10 text-center">
+              <p className="text-neutral-dark/50 text-sm">
+                Belum ada riwayat scan. Hasil analisa akan muncul di sini setelah
+                Anda mengupload foto makanan.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {history.map((scan) => (
+                <motion.div
+                  key={scan.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="border border-neutral-mid bg-neutral-light overflow-hidden"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={scan.foto_url}
+                    alt={scan.nama_makanan}
+                    className="w-full h-40 object-cover bg-neutral-dark/5"
+                  />
+                  <div className="p-4">
+                    <h4 className="font-semibold text-neutral-dark text-sm">
+                      {scan.nama_makanan}
+                    </h4>
+                    <p className="text-neutral-dark/60 text-xs mb-3">
+                      {scan.estimasi_porsi}
+                    </p>
+                    <div className="grid grid-cols-4 gap-2 text-center">
+                      <div>
+                        <p className="text-xs text-neutral-dark/50">Kal</p>
+                        <p className="text-sm font-bold text-primary">
+                          {scan.kalori}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-neutral-dark/50">Pro</p>
+                        <p className="text-sm font-bold text-primary">
+                          {scan.protein_g}g
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-neutral-dark/50">Karb</p>
+                        <p className="text-sm font-bold text-primary">
+                          {scan.karbohidrat_g}g
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-neutral-dark/50">Lem</p>
+                        <p className="text-sm font-bold text-primary">
+                          {scan.lemak_g}g
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 

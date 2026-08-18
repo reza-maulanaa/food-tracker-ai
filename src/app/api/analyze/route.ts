@@ -74,9 +74,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ result: nutrition });
   } catch (error) {
     console.error("Analyze error:", error);
-    return NextResponse.json(
-      { error: "Failed to analyze image" },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error ? error.message : "Failed to analyze image";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
