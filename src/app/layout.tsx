@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Food Tracker AI — Deteksi Gizi via Foto",
   description: "Upload foto makanan, dapatkan estimasi kandungan gizi secara instan.",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

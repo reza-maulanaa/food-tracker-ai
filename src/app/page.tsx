@@ -24,6 +24,20 @@ type ScanHistory = {
   created_at: string;
 };
 
+type DailyTargets = {
+  kalori: number;
+  protein_g: number;
+  karbohidrat_g: number;
+  lemak_g: number;
+};
+
+const DEFAULT_TARGETS: DailyTargets = {
+  kalori: 2000,
+  protein_g: 50,
+  karbohidrat_g: 300,
+  lemak_g: 65,
+};
+
 function NutritionBar({
   label,
   value,
@@ -116,6 +130,9 @@ export default function Home() {
   const [dragActive, setDragActive] = useState(false);
   const [history, setHistory] = useState<ScanHistory[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [todayScans, setTodayScans] = useState<ScanHistory[]>([]);
+  const [targets, setTargets] = useState<DailyTargets>(DEFAULT_TARGETS);
+  const [showTargetEditor, setShowTargetEditor] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const fetchedRef = useRef(false);
 
@@ -161,6 +178,33 @@ export default function Home() {
     }
   }, []);
 
+  const fetchTodayScans = useCallback(async () => {
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const res = await fetch(`/api/scans?date=${today}&limit=100`);
+      const data = await res.json();
+      if (res.ok) {
+        setTodayScans(data.scans || []);
+      }
+    } catch (err) {
+      console.error("Fetch today scans error:", err);
+    }
+  }, []);
+
+  const loadTargets = useCallback(() => {
+    try {
+      const saved = localStorage.getItem("daily_targets");
+      if (saved) {
+        setTargets(JSON.parse(saved));
+      }
+    } catch {}
+  }, []);
+
+  const saveTargets = useCallback((newTargets: DailyTargets) => {
+    setTargets(newTargets);
+    localStorage.setItem("daily_targets", JSON.stringify(newTargets));
+  }, []);
+
   const analyze = useCallback(async () => {
     if (!preview || !file) return;
     setLoading(true);
@@ -185,6 +229,7 @@ export default function Home() {
 
       setResult(data.result);
       fetchHistory();
+      fetchTodayScans();
     } catch (err) {
       console.error("Analyze error:", err);
       alert("Gagal menganalisa foto. Silakan coba lagi.");
@@ -204,17 +249,18 @@ export default function Home() {
     if (!fetchedRef.current) {
       fetchedRef.current = true;
       fetchHistory();
+      fetchTodayScans();
+      loadTargets();
     }
-  }, [fetchHistory]);
+  }, [fetchHistory, fetchTodayScans, loadTargets]);
 
   return (
     <div className="flex flex-col min-h-screen">
       {/* Header */}
       <header className="bg-primary px-6 py-4">
         <div className="max-w-3xl mx-auto flex items-center gap-3">
-          <div className="w-8 h-8 bg-neutral-light flex items-center justify-center">
-            <span className="text-primary font-bold text-sm">F</span>
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.svg" alt="Logo" className="w-8 h-8" />
           <h1 className="text-neutral-light text-lg font-semibold tracking-tight">
             Food Tracker AI
           </h1>
@@ -369,6 +415,132 @@ export default function Home() {
               }}
             />
           </motion.div>
+        </div>
+      </section>
+
+      {/* Daily Tracker */}
+      <section className="py-14 px-6">
+        <div className="max-w-3xl mx-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-neutral-dark">
+              Tracking Hari Ini
+            </h3>
+            <button
+              onClick={() => setShowTargetEditor(!showTargetEditor)}
+              className="text-xs text-primary hover:underline"
+            >
+              {showTargetEditor ? "Tutup" : "Atur Target"}
+            </button>
+          </div>
+
+          {showTargetEditor && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="bg-neutral-light border border-neutral-mid p-4 mb-4"
+            >
+              <p className="text-sm text-neutral-dark/70 mb-3">
+                Atur target harian Anda:
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { key: "kalori", label: "Kalori", unit: "kkal" },
+                  { key: "protein_g", label: "Protein", unit: "g" },
+                  { key: "karbohidrat_g", label: "Karbohidrat", unit: "g" },
+                  { key: "lemak_g", label: "Lemak", unit: "g" },
+                ].map((item) => (
+                  <div key={item.key}>
+                    <label className="text-xs text-neutral-dark/60 block mb-1">
+                      {item.label} ({item.unit})
+                    </label>
+                    <input
+                      type="number"
+                      value={targets[item.key as keyof DailyTargets]}
+                      onChange={(e) =>
+                        saveTargets({
+                          ...targets,
+                          [item.key]: parseInt(e.target.value) || 0,
+                        })
+                      }
+                      className="w-full border border-neutral-mid bg-neutral-light px-2 py-1.5 text-sm text-neutral-dark focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {todayScans.length === 0 ? (
+            <div className="border border-neutral-mid bg-neutral-light p-10 text-center">
+              <p className="text-neutral-dark/50 text-sm">
+                Belum ada scan hari ini. Upload foto makanan untuk mulai
+                tracking.
+              </p>
+            </div>
+          ) : (
+            <div className="border border-neutral-mid bg-neutral-light p-6">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+                {[
+                  {
+                    label: "Kalori",
+                    key: "kalori",
+                    unit: "kkal",
+                    sum: todayScans.reduce((s, x) => s + x.kalori, 0),
+                  },
+                  {
+                    label: "Protein",
+                    key: "protein_g",
+                    unit: "g",
+                    sum: todayScans.reduce((s, x) => s + x.protein_g, 0),
+                  },
+                  {
+                    label: "Karbohidrat",
+                    key: "karbohidrat_g",
+                    unit: "g",
+                    sum: todayScans.reduce((s, x) => s + x.karbohidrat_g, 0),
+                  },
+                  {
+                    label: "Lemak",
+                    key: "lemak_g",
+                    unit: "g",
+                    sum: todayScans.reduce((s, x) => s + x.lemak_g, 0),
+                  },
+                ].map((item) => {
+                  const target = targets[item.key as keyof DailyTargets];
+                  const pct = target > 0 ? Math.min((item.sum / target) * 100, 100) : 0;
+                  return (
+                    <div
+                      key={item.key}
+                      className="bg-neutral-mid/50 border border-neutral-mid p-4 text-center"
+                    >
+                      <p className="text-xs text-neutral-dark/60 mb-1">
+                        {item.label}
+                      </p>
+                      <p className="text-xl font-bold text-primary">
+                        {Math.round(item.sum)}
+                        <span className="text-sm font-normal text-neutral-dark/60 ml-0.5">
+                          {item.unit}
+                        </span>
+                      </p>
+                      <p className="text-xs text-neutral-dark/50 mt-1">
+                        / {target} {item.unit}
+                      </p>
+                      <div className="h-1.5 w-full bg-neutral-mid mt-2">
+                        <div
+                          className="h-full bg-primary transition-all"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-neutral-dark/50 text-center">
+                {todayScans.length} makanan tercatat hari ini
+              </p>
+            </div>
+          )}
         </div>
       </section>
 
@@ -546,11 +718,8 @@ export default function Home() {
       <footer className="border-t border-neutral-mid bg-neutral-light mt-auto">
         <div className="max-w-3xl mx-auto px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-primary flex items-center justify-center">
-              <span className="text-neutral-light font-bold text-[10px]">
-                F
-              </span>
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.svg" alt="Logo" className="w-6 h-6" />
             <span className="text-neutral-dark text-sm font-medium">
               Food Tracker AI
             </span>
